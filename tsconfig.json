@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "outDir": "dist-src",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}

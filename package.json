@@ -1,0 +1,29 @@
+{
+  "name": "skein",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cross-repo deploy compatibility gate for Helm values repos",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": { "node": ">=24" },
+  "dependencies": {
+    "@actions/core": "^1.11.1",
+    "@actions/github": "^6.0.1",
+    "@anthropic-ai/sdk": "^0.70.0",
+    "@octokit/auth-app": "^7.2.1",
+    "simple-git": "^3.28.0",
+    "yaml": "^2.8.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.0",
+    "tsx": "^4.20.0",
+    "vitest": "^3.2.0"
+  }
+}

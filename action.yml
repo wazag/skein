@@ -1,0 +1,44 @@
+name: "Skein"
+description: "Cross-repo deploy compatibility gate for Helm values repos — diffs bumped repos tag-to-tag, verifies against deployed pins, reports the minimal co-deploy set."
+branding:
+  icon: "anchor"
+  color: "blue"
+inputs:
+  mode:
+    description: "advisory (comment only) or enforcing (exit 1 on unsafe)"
+    default: "advisory"
+  model:
+    description: "Anthropic model id for extraction"
+    default: "claude-sonnet-5"
+  concurrency:
+    description: "Max parallel LLM calls"
+    default: "4"
+  max-cost-usd:
+    description: "Hard abort when projected spend exceeds this (USD)"
+    default: "5.00"
+  config:
+    description: "Path to skein.yaml, relative to values repo root"
+    default: "skein.yaml"
+  github-token:
+    description: "Token with read access to the service repos (fine-grained PAT)"
+    required: false
+  app-id:
+    description: "GitHub App id (alternative to github-token)"
+    required: false
+  app-private-key:
+    description: "GitHub App private key (alternative to github-token)"
+    required: false
+outputs:
+  verdict:
+    description: "pass | fail | error"
+  required-bumps:
+    description: "JSON array of {repo, from, to, reason}"
+  missing-env:
+    description: "JSON array of {env, consumer, provider, citation}"
+  report:
+    description: "Full markdown report"
+  cost-usd:
+    description: "Actual spend this run"
+runs:
+  using: "node24"
+  main: "dist/index.js"
