@@ -3,6 +3,7 @@
 // @actions/github are mocked, so the module-level void run() resolves entirely through
 // stubs — no Octokit construction, no network, and no process.exitCode poisoning.
 import { describe, expect, it, vi } from "vitest";
+import { REPORT_MARKER } from "../src/comment";
 
 const mocks = vi.hoisted(() => ({
   setFailed: vi.fn(),
@@ -36,5 +37,28 @@ describe("src/index run-on-import", () => {
     expect(mocks.setFailed).toHaveBeenCalledTimes(1);
     expect(typeof mocks.setFailed.mock.calls[0]?.[0]).toBe("string"); // message only, never an error object
     expect(mocks.getOctokit).not.toHaveBeenCalled(); // auth resolution fails before any octokit is built
+  });
+});
+
+describe("listReportComments pagination", () => {
+  it("follows pages (per_page: 100) until the marked report is found", async () => {
+    const { listReportComments } = await import("../src/index");
+    const pages = [
+      Array.from({ length: 100 }, (_, index) => ({ id: index + 1, body: `human comment ${index}` })),
+      [{ id: 201, body: "reply quoting the marker" }, { id: 202, body: `${REPORT_MARKER}\nreport` }],
+    ];
+    const requestedPages: number[] = [];
+    const found = await listReportComments(async (page) => {
+      requestedPages.push(page);
+      return pages[page - 1] ?? [];
+    });
+    expect(requestedPages).toEqual([1, 2]); // stopped paging on the first hit
+    expect(found).toEqual([{ id: 202, body: `${REPORT_MARKER}\nreport` }]);
+  });
+
+  it("stops at a short page and returns nothing when no report exists", async () => {
+    const { listReportComments } = await import("../src/index");
+    const found = await listReportComments(async () => [{ id: 7, body: "human comment" }]);
+    expect(found).toEqual([]);
   });
 });

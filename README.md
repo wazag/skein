@@ -312,7 +312,9 @@ values under those names for the rest of the job. The IAM role only needs
 - **Generic harvest, no per-framework route parsers.** Facts come from string-literal
   matching, and the harvest is direction-blind: a *caller's* own endpoint literal can
   register as a *served* endpoint. Sanity-check surprising co-bump rows.
-- **No LLM retries.** A failed API call fails the run (exit 1 in both modes).
+- **No application-level retries** (Anthropic SDK default: 2). A failed API call fails the
+  run (exit 1 in both modes).
+- **Services removed from skein.yaml between base and head are not reported.**
 
 ## Troubleshooting
 

@@ -32,6 +32,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // node_modules/@actions/core/lib/utils.js
 var require_utils = __commonJS({
@@ -30205,6 +30206,11 @@ var require_dist3 = __commonJS({
 });
 
 // src/index.ts
+var index_exports = {};
+__export(index_exports, {
+  listReportComments: () => listReportComments
+});
+module.exports = __toCommonJS(index_exports);
 var core = __toESM(require_core());
 
 // node_modules/@actions/github/lib/context.js
@@ -50915,6 +50921,17 @@ function renderReport(input) {
 // src/pipeline.ts
 var ERROR_BANNER = "## \u{1FABF} Skein \u2014 \u26A0\uFE0F run failed";
 var COST_ABORT_BANNER = "## \u{1FABF} Skein \u2014 \u26A0\uFE0F run aborted: cost ceiling";
+var PRICE_ESTIMATE_WARNING = "\n\u26A0\uFE0F model not in price table \u2014 cost figures estimated";
+var MODEL_PRICES = [
+  { pattern: /sonnet-5/, price: { input: 2, output: 10 } },
+  { pattern: /opus-5\.5/, price: { input: 4, output: 20 } },
+  { pattern: /opus-5/, price: { input: 5, output: 25 } },
+  { pattern: /haiku-4[.-]5/, price: { input: 1, output: 5 } },
+  { pattern: /haiku-5\.5/, price: { input: 0.1, output: 0.5 } }
+];
+function priceForModel(model) {
+  return MODEL_PRICES.find((entry) => entry.pattern.test(model))?.price;
+}
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -50986,6 +51003,7 @@ async function runPipeline(deps) {
     return errorOutcome(deps, ERROR_BANNER, `max-cost-usd must be a positive finite number, got '${maxCostUsd}'`, false);
   }
   const tracker = runCostTracker(maxCostUsd);
+  const modelPrice = priceForModel(deps.settings.model);
   const tempDirs = [];
   try {
     const config = parseSkeinYaml(await deps.readConfigFile());
@@ -51022,7 +51040,14 @@ async function runPipeline(deps) {
       const workdir = await workdirFor(entry.repo);
       const diff = await workdir.diffTags(bump.from, bump.to);
       if (diff.trim().length === 0) return { service: bump.service, verified: [], dropped: [] };
-      const claims = await extractClaims(deps.settings.model, diff, bump.service, deps.anthropicFactory(), tracker);
+      const claims = await extractClaims(
+        deps.settings.model,
+        diff,
+        bump.service,
+        deps.anthropicFactory(),
+        tracker,
+        modelPrice
+      );
       const { verified, dropped } = await verifyClaims(
         claims,
         diff,
@@ -51058,7 +51083,7 @@ async function runPipeline(deps) {
       0
     );
     const verifiedClaims = analyses.reduce((sum, analysis) => sum + analysis.verified.length, 0);
-    const report = renderReport({
+    let report = renderReport({
       verdict: solverResult.verdict,
       bumps: solverResult.requiredBumps,
       missingEnv: solverResult.missingEnv,
@@ -51074,6 +51099,7 @@ async function runPipeline(deps) {
       totalClaims,
       verifiedClaims
     });
+    if (modelPrice === void 0) report += PRICE_ESTIMATE_WARNING;
     return {
       verdict: solverResult.verdict,
       exitCode: solverResult.verdict === "pass" ? 0 : deps.settings.mode === "enforcing" ? 1 : 0,
@@ -51105,6 +51131,17 @@ async function runPipeline(deps) {
 // src/index.ts
 function messageOf2(error) {
   return error instanceof Error ? error.message : String(error);
+}
+var COMMENTS_PAGE_SIZE = 100;
+var MAX_COMMENT_PAGES = 100;
+async function listReportComments(listPage) {
+  for (let page = 1; page <= MAX_COMMENT_PAGES; page += 1) {
+    const comments = await listPage(page);
+    const reports = comments.filter((comment) => (comment.body ?? "").startsWith(REPORT_MARKER)).map((comment) => ({ id: comment.id, body: comment.body ?? "" }));
+    if (reports.length > 0) return reports;
+    if (comments.length < COMMENTS_PAGE_SIZE) return [];
+  }
+  return [];
 }
 function anthropicClientFactory(apiKey) {
   const client = new Anthropic(apiKey === "" ? void 0 : { apiKey });
@@ -51174,14 +51211,15 @@ async function run2() {
         // upsertComment matches by includes(REPORT_MARKER); a reply quoting the marker would
         // collide. Filter the listing to comments that START with the marker, so only the
         // true report comment can ever be the match upsertComment finds.
-        listComments: async (prNumber) => {
-          const listed = await octokit.rest.issues.listComments({
+        listComments: async (prNumber) => listReportComments(
+          async (page) => (await octokit.rest.issues.listComments({
             owner: repo.owner,
             repo: repo.repo,
-            issue_number: prNumber
-          });
-          return listed.data.filter((comment) => (comment.body ?? "").startsWith(REPORT_MARKER)).map((comment) => ({ id: comment.id, body: comment.body ?? "" }));
-        },
+            issue_number: prNumber,
+            per_page: COMMENTS_PAGE_SIZE,
+            page
+          })).data
+        ),
         updateComment: async (commentId, body) => {
           await octokit.rest.issues.updateComment({ owner: repo.owner, repo: repo.repo, comment_id: commentId, body });
         },
@@ -51204,3 +51242,7 @@ async function run2() {
   }
 }
 void run2();
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  listReportComments
+});

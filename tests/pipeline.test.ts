@@ -270,6 +270,32 @@ describe("runPipeline golden path", () => {
     expect(outcome.report).toContain("a1 → a1-twin");
   });
 
+  it("prices the run from the model's list price (opus-5)", async () => {
+    const deps = buildDeps("advisory");
+    deps.settings = { ...deps.settings, model: "claude-opus-5" };
+    const outcome = await runPipeline(deps);
+    // (100 input × $5 + 50 output × $25) / 1M = $0.00175 → $0.002 at the report's 3dp
+    expect(outcome.report).toContain("$0.002");
+    expect(outcome.report).not.toContain("price table");
+  });
+
+  it("uses the verified sonnet-5 list price, not the stale default", async () => {
+    const deps = buildDeps("advisory");
+    deps.settings = { ...deps.settings, model: "claude-sonnet-5" };
+    const outcome = await runPipeline(deps);
+    // (100 × $2 + 50 × $10) / 1M = $0.0007 — pins {2,10}, not the old {3,15} default
+    expect(outcome.costUsd).toBeCloseTo(0.0007, 6);
+    expect(outcome.report).not.toContain("price table");
+  });
+
+  it("falls back to the default price with an estimate warning for unknown models", async () => {
+    const deps = buildDeps("advisory");
+    deps.settings = { ...deps.settings, model: "claude-mystery-9" };
+    const outcome = await runPipeline(deps);
+    expect(outcome.report).toContain("⚠️ model not in price table — cost figures estimated");
+    expect(outcome.costUsd).toBeCloseTo(0.00105, 6); // default {3,15}
+  });
+
   it("removes every temporary clone dir even when the pipeline fails mid-run", async () => {
     const deps = buildDeps("advisory");
     const cloneDirs: string[] = [];

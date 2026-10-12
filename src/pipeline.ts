@@ -10,7 +10,7 @@ import { detectBumps, extractPins, type PinSnapshot } from "./pins";
 import { GitRepoError, refExists, valuesFileAtRef, type GitWorkdir } from "./git";
 import { harvestFacts } from "./facts";
 import { extractClaims, type AnthropicClient, type Claim } from "./extract";
-import { CostCeilingExceeded, runCostTracker } from "./cost";
+import { CostCeilingExceeded, runCostTracker, type ModelPrice } from "./cost";
 import { verifyClaims } from "./verify";
 import {
   solveMinimumUpgrades,
@@ -24,6 +24,23 @@ import { REPORT_MARKER, upsertComment, type CommentApi } from "./comment";
 
 const ERROR_BANNER = "## 🪿 Skein — ⚠️ run failed";
 const COST_ABORT_BANNER = "## 🪿 Skein — ⚠️ run aborted: cost ceiling";
+const PRICE_ESTIMATE_WARNING = "\n⚠️ model not in price table — cost figures estimated";
+
+// API list prices (USD per 1M tokens, input/output), verified against
+// platform.claude.com/docs/en/about-claude/pricing on 2026-10-13. Order matters: more
+// specific patterns first. A model matching nothing falls back to extractClaims' default
+// price and the report footer carries PRICE_ESTIMATE_WARNING.
+const MODEL_PRICES: Array<{ pattern: RegExp; price: ModelPrice }> = [
+  { pattern: /sonnet-5/, price: { input: 2, output: 10 } },
+  { pattern: /opus-5\.5/, price: { input: 4, output: 20 } },
+  { pattern: /opus-5/, price: { input: 5, output: 25 } },
+  { pattern: /haiku-4[.-]5/, price: { input: 1, output: 5 } },
+  { pattern: /haiku-5\.5/, price: { input: 0.1, output: 0.5 } },
+];
+
+function priceForModel(model: string): ModelPrice | undefined {
+  return MODEL_PRICES.find((entry) => entry.pattern.test(model))?.price;
+}
 
 export type PipelineDeps = {
   settings: RunSettings;
@@ -158,6 +175,7 @@ export async function runPipeline(deps: PipelineDeps): Promise<PipelineOutcome> 
     return errorOutcome(deps, ERROR_BANNER, `max-cost-usd must be a positive finite number, got '${maxCostUsd}'`, false);
   }
   const tracker = runCostTracker(maxCostUsd);
+  const modelPrice = priceForModel(deps.settings.model);
   const tempDirs: string[] = [];
   try {
     const config = parseSkeinYaml(await deps.readConfigFile());
@@ -204,7 +222,14 @@ export async function runPipeline(deps: PipelineDeps): Promise<PipelineOutcome> 
       // an empty diff must never trigger an LLM request.
       const diff = await workdir.diffTags(bump.from, bump.to);
       if (diff.trim().length === 0) return { service: bump.service, verified: [], dropped: [] };
-      const claims = await extractClaims(deps.settings.model, diff, bump.service, deps.anthropicFactory(), tracker);
+      const claims = await extractClaims(
+        deps.settings.model,
+        diff,
+        bump.service,
+        deps.anthropicFactory(),
+        tracker,
+        modelPrice,
+      );
       const { verified, dropped } = await verifyClaims(claims, diff, (file) =>
         workdir.readFile(bump.to, file).catch(() => undefined),
       );
@@ -246,7 +271,7 @@ export async function runPipeline(deps: PipelineDeps): Promise<PipelineOutcome> 
       0,
     );
     const verifiedClaims = analyses.reduce((sum, analysis) => sum + analysis.verified.length, 0);
-    const report = renderReport({
+    let report = renderReport({
       verdict: solverResult.verdict,
       bumps: solverResult.requiredBumps,
       missingEnv: solverResult.missingEnv,
@@ -262,6 +287,7 @@ export async function runPipeline(deps: PipelineDeps): Promise<PipelineOutcome> 
       totalClaims,
       verifiedClaims,
     });
+    if (modelPrice === undefined) report += PRICE_ESTIMATE_WARNING;
     return {
       verdict: solverResult.verdict,
       exitCode: solverResult.verdict === "pass" ? 0 : deps.settings.mode === "enforcing" ? 1 : 0,

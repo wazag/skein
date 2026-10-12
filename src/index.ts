@@ -18,6 +18,26 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+const COMMENTS_PAGE_SIZE = 100;
+const MAX_COMMENT_PAGES = 100;
+
+// Page through the PR's comments (REST defaults to 30 ascending; the marker-prefixed report
+// can sit far beyond page 1 on busy PRs) until a marked report is found or the listing is
+// exhausted — otherwise the upsert would create a permanent duplicate comment.
+export async function listReportComments(
+  listPage: (page: number) => Promise<Array<{ id: number; body?: string }>>,
+): Promise<Array<{ id: number; body: string }>> {
+  for (let page = 1; page <= MAX_COMMENT_PAGES; page += 1) {
+    const comments = await listPage(page);
+    const reports = comments
+      .filter((comment) => (comment.body ?? "").startsWith(REPORT_MARKER))
+      .map((comment) => ({ id: comment.id, body: comment.body ?? "" }));
+    if (reports.length > 0) return reports;
+    if (comments.length < COMMENTS_PAGE_SIZE) return [];
+  }
+  return [];
+}
+
 // Thin shim over the installed SDK: messages.create mapped onto AnthropicClient.createMessage,
 // content blocks and usage extracted into the minimal shape. No retry logic in v1.
 function anthropicClientFactory(apiKey: string): () => AnthropicClient {
@@ -92,16 +112,18 @@ async function run(): Promise<void> {
         // upsertComment matches by includes(REPORT_MARKER); a reply quoting the marker would
         // collide. Filter the listing to comments that START with the marker, so only the
         // true report comment can ever be the match upsertComment finds.
-        listComments: async (prNumber) => {
-          const listed = await octokit.rest.issues.listComments({
-            owner: repo.owner,
-            repo: repo.repo,
-            issue_number: prNumber,
-          });
-          return listed.data
-            .filter((comment) => (comment.body ?? "").startsWith(REPORT_MARKER))
-            .map((comment) => ({ id: comment.id, body: comment.body ?? "" }));
-        },
+        listComments: async (prNumber) =>
+          listReportComments(async (page) =>
+            (
+              await octokit.rest.issues.listComments({
+                owner: repo.owner,
+                repo: repo.repo,
+                issue_number: prNumber,
+                per_page: COMMENTS_PAGE_SIZE,
+                page,
+              })
+            ).data,
+          ),
         updateComment: async (commentId, body) => {
           await octokit.rest.issues.updateComment({ owner: repo.owner, repo: repo.repo, comment_id: commentId, body });
         },
