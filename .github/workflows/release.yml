@@ -1,11 +1,12 @@
-# Release — on a pushed v* tag: full verification, dist staleness gate, then a
-# GitHub release created with the runner's preinstalled `gh` CLI (no third-party
-# release action in the chain). Dormant until the repo has a remote, exactly like
-# dogfood.yml; it fires on the first `git push origin v0.1.0`.
+# Release — semantic-release on every push to main: conventional commits drive
+# version, changelog, git tag, and the GitHub release. package.json version is
+# updated in the release commit (npmPublish: false — dist ships via the action,
+# not the npm registry). The v0.1.0 tag marks the previous manual release;
+# semantic-release picks up from it.
 name: release
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
 permissions:
   contents: write
 jobs:
@@ -13,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
         with:
           node-version: 24
@@ -22,6 +25,6 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: git diff --exit-code -- dist || (echo "dist/ is stale — rebuild and commit" && exit 1)
-      - run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+      - run: npx semantic-release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}

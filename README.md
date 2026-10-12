@@ -383,10 +383,12 @@ npm run typecheck
 npm run build       # esbuild → dist/index.js (committed; CI fails on stale dist)
 ```
 
-Releasing: push a `v*` tag. `.github/workflows/release.yml` runs typecheck, tests,
-build, a dist staleness check, and creates the GitHub release via `gh` — no
-third-party release actions in the chain. `v0.1.0` is tagged locally and travels with
-the first push.
+Releases are cut by [semantic-release](https://github.com/semantic-release/semantic-release)
+on every push to `main` (`.github/workflows/release.yml`): conventional commit
+messages (`feat:`, `fix:`, …) drive the version bump, changelog, git tag, and
+GitHub release. `package.json` is version-bumped in the release commit
+(`npmPublish: false` — Skein ships as an action, not an npm package). The
+`v0.1.0` tag records the pre-semantic-release baseline.
 
 ## Marketplace
 
