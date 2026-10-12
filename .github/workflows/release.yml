@@ -1,0 +1,27 @@
+# Release — on a pushed v* tag: full verification, dist staleness gate, then a
+# GitHub release created with the runner's preinstalled `gh` CLI (no third-party
+# release action in the chain). Dormant until the repo has a remote, exactly like
+# dogfood.yml; it fires on the first `git push origin v0.1.0`.
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: git diff --exit-code -- dist || (echo "dist/ is stale — rebuild and commit" && exit 1)
+      - run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

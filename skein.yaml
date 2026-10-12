@@ -1,0 +1,8 @@
+# Dogfood config — Skein runs against this repo's own PRs (.github/workflows/dogfood.yml).
+# The single service is Skein itself: the "deployed pin" is the tag recorded in
+# dogfood/values.yaml, and the service repo is this repository.
+services:
+  skein:
+    repo: wazag/skein
+    file: dogfood/values.yaml
+    path: services.skein.tag

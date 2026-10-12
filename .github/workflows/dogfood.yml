@@ -1,0 +1,36 @@
+# Dogfood — Skein gates its own PRs. Dormant until the repo gets a GitHub remote:
+# the workflow is complete and correct, but nothing can run until `git push` has a
+# destination. It activates on the first push (the v0.1.0 tag lands with that push).
+#
+# What proves what:
+# - any PR touching the action surface (dist/**, action.yml) or the dogfood pins
+#   boots the action end-to-end in real GitHub and upserts the report comment
+#   (a no-bump run makes zero LLM calls and spends nothing);
+# - a PR that bumps dogfood/values.yaml past v0.1.0 additionally exercises the
+#   paid pipeline (this repo's own tag-to-tag diff). That needs the
+#   ANTHROPIC_API_KEY repo secret — without it the run fails loudly (exit 1),
+#   which is also the documented malfunction contract.
+name: dogfood
+on:
+  pull_request:
+    paths: [skein.yaml, dogfood/**, action.yml, dist/**]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  skein:
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 is mandatory: Skein reads the PR base snapshot from the
+      # checkout and refuses to guess when the base ref is absent (shallow default).
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+      # The default GITHUB_TOKEN cannot read *sibling* repos — but dogfood's only
+      # service repo is this very repo, which the token may read (contents: read)
+      # and comment in (pull-requests: write). No PAT or App needed to boot.
+      - uses: ./
+        with:
+          mode: advisory
+          github-token: ${{ github.token }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}

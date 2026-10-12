@@ -1,0 +1,7 @@
+# Self-referential values file for the dogfood workflow: the one "service" Skein
+# gates is Skein itself, pinned to the current release tag. A PR that bumps this
+# pin makes the dogfood run diff this repo old-tag→new-tag through the full
+# extraction → citation-verify → harvest → solve pipeline.
+services:
+  skein:
+    tag: v0.1.0
