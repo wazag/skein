@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { bloblessClone, GitRepoError, valuesFileAtRef } from "../src/git";
+import { bloblessClone, GitRepoError, redactSecrets, valuesFileAtRef } from "../src/git";
 
 let fixtureDir: string;
 let svcOrigin: string;
@@ -93,6 +93,41 @@ describe("GitWorkdir", () => {
     const workdir = await bloblessClone(svcOrigin, "", join(fixtureDir, "clone7"));
     await expect(workdir.diffTags("a1", "nope")).rejects.toThrow(GitRepoError);
     await expect(workdir.diffTags("a1", "nope")).rejects.toThrow(/svc.*nope/);
+  });
+});
+
+describe("token redaction", () => {
+  const FAKE_TOKEN = "sekret-token-xyz";
+
+  it("clone failures never leak the raw token", async () => {
+    // The dir name embeds the token pattern so git's URL echo in the failure genuinely contains
+    // the secret substring — this git strips userinfo, so the path carries it instead.
+    const tokenBearingUrl = join(fixtureDir, "svc-sekret-token-xyz");
+    let message = "";
+    try {
+      await bloblessClone(tokenBearingUrl, FAKE_TOKEN, join(fixtureDir, "leaky-clone"));
+      expect.unreachable("cloning through an authenticated https URL against a local path must fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(GitRepoError);
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain("clone failed for");
+    expect(message).not.toContain(FAKE_TOKEN);
+    expect(message).toContain("***");
+  });
+
+  it("redactSecrets masks the token in promisor fetch failure stderr", () => {
+    const stderrLine =
+      "error: failed to fetch some objects from 'https://x-access-token:sekret-token-xyz@github.com/org/svc.git'";
+    const redacted = redactSecrets(stderrLine, [FAKE_TOKEN]);
+    expect(redacted).not.toContain(FAKE_TOKEN);
+    expect(redacted).toContain("https://x-access-token:***@github.com/org/svc.git");
+  });
+
+  it("redactSecrets masks every occurrence and ignores empty secrets", () => {
+    const twice = "url one: sekret-token-xyz and url two: sekret-token-xyz";
+    expect(redactSecrets(twice, [FAKE_TOKEN])).toBe("url one: *** and url two: ***");
+    expect(redactSecrets(twice, [""])).toBe(twice);
   });
 });
 

@@ -7,8 +7,22 @@ const execFileAsync = promisify(execFile);
 const MAX_BUFFER_BYTES = 256 * 1024 * 1024;
 const MAX_RUN_ERROR_DETAIL_LENGTH = 500;
 const MAX_CLONE_ERROR_DETAIL_LENGTH = 300;
+const REDACTION_MARKER = "***";
 
 export class GitRepoError extends Error {}
+
+/**
+ * Replace every occurrence of each secret with a marker. Bare-substring matching (rather than
+ * exact-URL matching) so URL variations git may echo — `.git` suffixes, rewritten remotes —
+ * cannot dodge redaction.
+ */
+export function redactSecrets(text: string, secrets: string[]): string {
+  let redacted = text;
+  for (const secret of secrets) {
+    if (secret) redacted = redacted.split(secret).join(REDACTION_MARKER);
+  }
+  return redacted;
+}
 
 function errorDetail(error: unknown): string {
   const stderr =
@@ -19,12 +33,15 @@ function errorDetail(error: unknown): string {
   return (stderr || message).slice(0, MAX_RUN_ERROR_DETAIL_LENGTH);
 }
 
-async function run(repoDir: string, repoLabel: string, ...args: string[]): Promise<string> {
+async function run(repoDir: string, repoLabel: string, secrets: string[], ...args: string[]): Promise<string> {
   try {
     const { stdout } = await execFileAsync("git", args, { cwd: repoDir, maxBuffer: MAX_BUFFER_BYTES });
     return stdout;
   } catch (error) {
-    throw new GitRepoError(`git ${args.join(" ")} failed in ${repoLabel}: ${errorDetail(error)}`, { cause: error });
+    const rawMessage = `git ${args.join(" ")} failed in ${repoLabel}: ${errorDetail(error)}`;
+    throw new GitRepoError(redactSecrets(rawMessage, secrets).slice(0, MAX_RUN_ERROR_DETAIL_LENGTH), {
+      cause: error,
+    });
   }
 }
 
@@ -40,17 +57,21 @@ export async function bloblessClone(repoUrl: string, token: string, targetDir: s
   const authenticatedUrl = token
     ? `https://x-access-token:${token}@${repoUrl.replace(/^https:\/\//, "")}`
     : repoUrl;
+  // git echoes the remote URL (with embedded token) in clone failures AND in promisor lazy-fetch
+  // failures raised by any later workdir command — every error path must redact the token.
+  const secrets = token ? [token] : [];
   try {
     await simpleGit().clone(authenticatedUrl, targetDir, ["--filter=blob:none", "--no-checkout"]);
   } catch (error) {
     const rawDetail = error instanceof Error ? error.message : String(error);
-    // git echoes the remote URL (with embedded token) in clone failures — redact it.
-    const detail = rawDetail.split(authenticatedUrl).join(repoUrl).slice(0, MAX_CLONE_ERROR_DETAIL_LENGTH);
-    throw new GitRepoError(`clone failed for ${repoUrl}: ${detail}`, { cause: error });
+    const rawMessage = `clone failed for ${repoUrl}: ${rawDetail}`;
+    throw new GitRepoError(redactSecrets(rawMessage, secrets).slice(0, MAX_CLONE_ERROR_DETAIL_LENGTH), {
+      cause: error,
+    });
   }
   const repoLabel = repoUrl;
   const requireTag = async (tag: string): Promise<void> => {
-    const tags = (await run(targetDir, repoLabel, "tag", "--list")).split("\n").filter(Boolean);
+    const tags = (await run(targetDir, repoLabel, secrets, "tag", "--list")).split("\n").filter(Boolean);
     if (!tags.includes(tag)) {
       throw new GitRepoError(
         `repo ${repoLabel} has no tag '${tag}' — pin points nowhere; push the tag or fix skein.yaml/pins`
@@ -61,27 +82,29 @@ export async function bloblessClone(repoUrl: string, token: string, targetDir: s
     async diffTags(oldTag: string, newTag: string): Promise<string> {
       await requireTag(oldTag);
       await requireTag(newTag);
-      return run(targetDir, repoLabel, "diff", `${oldTag}..${newTag}`, "--no-color");
+      return run(targetDir, repoLabel, secrets, "diff", `${oldTag}..${newTag}`, "--no-color");
     },
     async showFile(ref: string, file: string): Promise<string> {
-      return run(targetDir, repoLabel, "show", `${ref}:${file}`);
+      return run(targetDir, repoLabel, secrets, "show", `${ref}:${file}`);
     },
     async listTagsAsc(current: string): Promise<string[]> {
-      const tags = (await run(targetDir, repoLabel, "tag", "--list", "--sort=version:refname"))
+      const tags = (await run(targetDir, repoLabel, secrets, "tag", "--list", "--sort=version:refname"))
         .split("\n")
         .filter(Boolean);
       const currentIndex = tags.indexOf(current);
       return currentIndex === -1 ? tags : tags.slice(currentIndex);
     },
     async listFiles(ref: string): Promise<string[]> {
-      return (await run(targetDir, repoLabel, "ls-tree", "-r", "--name-only", ref)).split("\n").filter(Boolean);
+      return (await run(targetDir, repoLabel, secrets, "ls-tree", "-r", "--name-only", ref))
+        .split("\n")
+        .filter(Boolean);
     },
     async readFile(ref: string, file: string): Promise<string> {
-      return run(targetDir, repoLabel, "show", `${ref}:${file}`);
+      return run(targetDir, repoLabel, secrets, "show", `${ref}:${file}`);
     },
   };
 }
 
 export async function valuesFileAtRef(valuesRepoDir: string, file: string, ref: string): Promise<string> {
-  return run(valuesRepoDir, "values repo", "show", `${ref}:${file}`);
+  return run(valuesRepoDir, "values repo", [], "show", `${ref}:${file}`);
 }
