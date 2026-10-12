@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { solveMinimumUpgrades } from "../src/solve";
+import { solveMinimumUpgrades, type Requirement } from "../src/solve";
 import type { ProviderFacts } from "../src/facts";
 
 const emptyFacts: ProviderFacts = { endpoints: [], envVars: [], queueNames: [], files: [] };
@@ -8,6 +8,15 @@ const factsWithTag: Record<string, ProviderFacts> = {
   "api-a@a2": { ...emptyFacts, endpoints: ["/v1/orders", "/v2/orders"] },
   "api-a@a3": { ...emptyFacts, endpoints: ["/v1/orders", "/v2/orders", "/v3/orders"] },
 };
+// Non-monotone facts: a2 serves /v2/orders only, a3 serves /v3/orders only — no single tag serves both.
+const nonMonotoneFacts: Record<string, ProviderFacts> = {
+  "api-a@a2": { ...emptyFacts, endpoints: ["/v2/orders"] },
+  "api-a@a3": { ...emptyFacts, endpoints: ["/v3/orders"] },
+};
+const ordersV2AndV3: Requirement[] = [
+  { service: "api-b", kind: "endpoint", detail: "/v2/orders", citation: { file: "c.ts", line: 2 } },
+  { service: "api-b", kind: "endpoint", detail: "/v3/orders", citation: { file: "c.ts", line: 3 } },
+];
 
 const baseInput = {
   deployedPins: { "api-a": "a1", "api-b": "b3" },
@@ -45,6 +54,7 @@ describe("solveMinimumUpgrades", () => {
     });
     expect(result.verdict).toBe("fail");
     expect(result.unmet[0]?.detail).toBe("/v9/ghost");
+    expect(result.unmet[0]?.reason).toBe("no tag of any provider serves /v9/ghost");
   });
 
   it("reports missing env vars not present in any values file", async () => {
@@ -57,5 +67,59 @@ describe("solveMinimumUpgrades", () => {
       { env: "ORDERS_V2_URL", consumer: "api-b", citation: { file: "c.ts", line: 3 } },
     ]);
     expect(result.verdict).toBe("fail");
+  });
+
+  it("reduces two same-provider requirements into one bump at the smallest tag serving both", async () => {
+    const result = await solveMinimumUpgrades({ ...baseInput, requirements: ordersV2AndV3 });
+    expect(result.verdict).toBe("pass");
+    expect(result.requiredBumps).toEqual([
+      {
+        service: "api-a",
+        from: "a1",
+        to: "a3", // a2 serves /v2/orders only — the row must jump straight to the first tag serving both
+        reason: "serves /v2/orders, /v3/orders (needed by api-b — c.ts:2, c.ts:3)",
+      },
+    ]);
+  });
+
+  it("fails with every requirement unmet when non-monotone facts leave no single serving tag", async () => {
+    const result = await solveMinimumUpgrades({
+      ...baseInput,
+      factsAtTag: (service: string, tag: string) =>
+        Promise.resolve(nonMonotoneFacts[`${service}@${tag}`] ?? emptyFacts),
+      requirements: ordersV2AndV3,
+    });
+    expect(result.verdict).toBe("fail");
+    expect(result.requiredBumps).toEqual([]);
+    expect(result.unmet).toEqual([
+      {
+        service: "api-b",
+        kind: "endpoint",
+        detail: "/v2/orders",
+        citation: { file: "c.ts", line: 2 },
+        reason: "no single tag of api-a serves all routed requirements",
+      },
+      {
+        service: "api-b",
+        kind: "endpoint",
+        detail: "/v3/orders",
+        citation: { file: "c.ts", line: 3 },
+        reason: "no single tag of api-a serves all routed requirements",
+      },
+    ]);
+  });
+
+  it("pins the combined reason format across multiple consumers (consumed character-exact by the report)", async () => {
+    const result = await solveMinimumUpgrades({
+      ...baseInput,
+      requirements: [
+        { service: "api-b", kind: "endpoint", detail: "/v2/orders", citation: { file: "c.ts", line: 2 } },
+        { service: "api-c", kind: "endpoint", detail: "/v3/orders", citation: { file: "d.ts", line: 7 } },
+      ],
+    });
+    expect(result.requiredBumps).toHaveLength(1);
+    expect(result.requiredBumps[0]?.reason).toBe(
+      "serves /v2/orders, /v3/orders (needed by api-b, api-c — c.ts:2, d.ts:7)",
+    );
   });
 });
