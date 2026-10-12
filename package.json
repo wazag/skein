@@ -11,7 +11,7 @@
   },
   "engines": { "node": ">=24" },
   "dependencies": {
-    "@actions/core": "^1.11.1",
+    "@actions/core": "^2.0.3",
     "@actions/github": "^9.1.1",
     "@anthropic-ai/sdk": "^0.70.0",
     "@octokit/auth-app": "^7.2.1",
