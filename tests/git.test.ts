@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { bloblessClone, GitRepoError, redactSecrets, valuesFileAtRef } from "../src/git";
+import { bloblessClone, GitRepoError, redactSecrets, refExists, valuesFileAtRef } from "../src/git";
 
 let fixtureDir: string;
 let svcOrigin: string;
@@ -140,5 +140,13 @@ describe("valuesFileAtRef", () => {
   it("throws GitRepoError naming the values repo for a missing file", async () => {
     await expect(valuesFileAtRef(valuesDir, "env/prod/missing.yaml", "HEAD")).rejects.toThrow(GitRepoError);
     await expect(valuesFileAtRef(valuesDir, "env/prod/missing.yaml", "HEAD")).rejects.toThrow(/values repo/);
+  });
+});
+
+describe("refExists", () => {
+  it("is true for a ref present in the checkout and false for an unfetched base sha", async () => {
+    const headSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: valuesDir }).toString().trim();
+    await expect(refExists(valuesDir, headSha)).resolves.toBe(true);
+    await expect(refExists(valuesDir, "0".repeat(40))).resolves.toBe(false);
   });
 });

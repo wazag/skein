@@ -42,6 +42,8 @@ beforeAll(() => {
   git(apiADir, "add", "-A"); git(apiADir, "commit", "-m", "1"); git(apiADir, "tag", "a1");
   writeFileSync(join(apiADir, "routes.ts"), 'export const routes = ["/v1/orders", "/v2/orders"];\n');
   git(apiADir, "add", "-A"); git(apiADir, "commit", "-m", "2"); git(apiADir, "tag", "a2");
+  // twin tag on an existing tree: a bump a1 → a1-twin diffs to empty
+  git(apiADir, "tag", "a1-twin", "a1");
   // consumer api-b: b3 does not call /v2/orders; b5 adds the call (cited at src/client.ts:3).
   git(fixtureDir, "init", "-b", "main", "api-b");
   const apiBDir = join(fixtureDir, "api-b");
@@ -53,7 +55,13 @@ beforeAll(() => {
     "const url = '/v1/orders';\nawait fetch(url);\nconst next = '/v2/orders';\nawait fetch(next);\n",
   );
   git(apiBDir, "add", "-A"); git(apiBDir, "commit", "-m", "2"); git(apiBDir, "tag", "b5");
-  // values repo: a pinned a1, b pinned b3 → head bumps b to b5.
+  // api-c exists only in the head commit's config: its values file appears with the bump —
+  // the first-time-pin shape (base ref present, file absent at base).
+  git(fixtureDir, "init", "-b", "main", "api-c");
+  const apiCDir = join(fixtureDir, "api-c");
+  writeFileSync(join(apiCDir, "client.ts"), "const base = '/v0/ping';\n");
+  git(apiCDir, "add", "-A"); git(apiCDir, "commit", "-m", "1"); git(apiCDir, "tag", "c1");
+  // values repo: a pinned a1, b pinned b3 → head bumps b to b5 and first-pins c.
   git(fixtureDir, "init", "-b", "main", "values");
   const valuesDir = join(fixtureDir, "values");
   mkdirSync(join(valuesDir, "env/prod"), { recursive: true });
@@ -73,7 +81,24 @@ beforeAll(() => {
   ].join("\n"));
   git(valuesDir, "add", "-A"); git(valuesDir, "commit", "-m", "pins");
   writeFileSync(join(valuesDir, "env/prod/b.yaml"), "tag: b5\n");
-  git(valuesDir, "add", "-A"); git(valuesDir, "commit", "-m", "bump b");
+  writeFileSync(join(valuesDir, "env/prod/c.yaml"), "tag: c1\n");
+  writeFileSync(join(valuesDir, "skein.yaml"), [
+    "services:",
+    "  api-a:",
+    "    repo: local/api-a",
+    "    file: env/prod/a.yaml",
+    "    path: tag",
+    "  api-b:",
+    "    repo: local/api-b",
+    "    file: env/prod/b.yaml",
+    "    path: tag",
+    "  api-c:",
+    "    repo: local/api-c",
+    "    file: env/prod/c.yaml",
+    "    path: tag",
+    "",
+  ].join("\n"));
+  git(valuesDir, "add", "-A"); git(valuesDir, "commit", "-m", "bump b, first-pin c");
 });
 
 afterAll(() => rmSync(fixtureDir, { recursive: true, force: true }));
@@ -85,8 +110,7 @@ const citedCallClaim: Claim = {
 
 type FakeDeps = PipelineDeps & { comments: Array<{ id: number; body: string }> };
 
-function buildDeps(mode: "advisory" | "enforcing"): FakeDeps {
-  const valuesDir = join(fixtureDir, "values");
+function buildDeps(mode: "advisory" | "enforcing", valuesDir = join(fixtureDir, "values")): FakeDeps {
   const headCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: valuesDir }).toString().trim();
   const baseCommit = execFileSync("git", ["rev-parse", "HEAD~1"], { cwd: valuesDir }).toString().trim();
   const comments: Array<{ id: number; body: string }> = [];
@@ -181,7 +205,7 @@ describe("runPipeline golden path", () => {
 
   it("zero bumps → pass report, exit 0, and no LLM call", async () => {
     const deps = buildDeps("enforcing");
-    deps.headSha = deps.baseSha; // base and head snapshots identical → no bumps
+    deps.baseSha = deps.headSha; // same commit at both refs → identical snapshots, no bumps
     deps.anthropicFactory = () => {
       throw new Error("LLM must not be called for a bumpless PR");
     };
@@ -189,6 +213,61 @@ describe("runPipeline golden path", () => {
     expect(outcome.verdict).toBe("pass");
     expect(outcome.exitCode).toBe(0);
     expect(outcome.report).toContain("- none");
+  });
+
+  it("base ref absent from the checkout (shallow clone) errors instead of silently passing", async () => {
+    const deps = buildDeps("advisory");
+    deps.baseSha = "0".repeat(40); // what a fetch-depth: 1 checkout does to pull_request.base.sha
+    const outcome = await runPipeline(deps);
+    expect(outcome.verdict).toBe("error");
+    expect(outcome.exitCode).toBe(1); // both modes — refusing to guess is never advisory
+    expect(outcome.report).toContain("fetch-depth");
+    expect(outcome.report).toContain("refusing to guess");
+  });
+
+  it("first-time pin (base ref present, file absent at base) skips extraction without error", async () => {
+    const deps = buildDeps("advisory");
+    let llmCalls = 0;
+    deps.anthropicFactory = () => {
+      llmCalls += 1;
+      return {
+        createMessage: async () => ({
+          content: [{ type: "text", text: JSON.stringify([citedCallClaim]) }],
+          usage: { input_tokens: 100, output_tokens: 50 },
+        }),
+      };
+    };
+    const outcome = await runPipeline(deps);
+    expect(outcome.verdict).toBe("pass");
+    expect(outcome.exitCode).toBe(0);
+    expect(llmCalls).toBe(1); // only api-b's diff — api-c is newly pinned, no paid call, no error
+    expect(outcome.report).not.toContain("api-c"); // first-time pins render nothing (no base to compare)
+  });
+
+  it("identical-tree tag bump extracts nothing and makes no LLM call", async () => {
+    const twinValuesDir = join(fixtureDir, "values-twin");
+    git(fixtureDir, "init", "-b", "main", "values-twin");
+    mkdirSync(join(twinValuesDir, "env/prod"), { recursive: true });
+    writeFileSync(join(twinValuesDir, "skein.yaml"), [
+      "services:",
+      "  api-a:",
+      "    repo: local/api-a",
+      "    file: env/prod/a.yaml",
+      "    path: tag",
+      "",
+    ].join("\n"));
+    writeFileSync(join(twinValuesDir, "env/prod/a.yaml"), "tag: a1\n");
+    git(twinValuesDir, "add", "-A"); git(twinValuesDir, "commit", "-m", "pins");
+    writeFileSync(join(twinValuesDir, "env/prod/a.yaml"), "tag: a1-twin\n");
+    git(twinValuesDir, "add", "-A"); git(twinValuesDir, "commit", "-m", "twin bump");
+    const deps = buildDeps("enforcing", twinValuesDir);
+    deps.anthropicFactory = () => {
+      throw new Error("LLM must not be called for an identical-tree bump");
+    };
+    const outcome = await runPipeline(deps);
+    expect(outcome.verdict).toBe("pass");
+    expect(outcome.exitCode).toBe(0);
+    expect(outcome.report).toContain("a1 → a1-twin");
   });
 
   it("removes every temporary clone dir even when the pipeline fails mid-run", async () => {

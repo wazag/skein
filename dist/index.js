@@ -50450,6 +50450,14 @@ async function bloblessClone(repoUrl, token, targetDir) {
 async function valuesFileAtRef(valuesRepoDir, file, ref) {
   return run(valuesRepoDir, "values repo", [], "show", `${ref}:${file}`);
 }
+async function refExists(repoDir, ref) {
+  try {
+    await run(repoDir, "values repo", [], "cat-file", "-e", ref);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // src/comment.ts
 var REPORT_MARKER = "<!-- skein-report:v1 -->";
@@ -50981,6 +50989,14 @@ async function runPipeline(deps) {
   const tempDirs = [];
   try {
     const config = parseSkeinYaml(await deps.readConfigFile());
+    if (!await refExists(deps.valuesDir, deps.baseSha)) {
+      return errorOutcome(
+        deps,
+        ERROR_BANNER,
+        `base ref ${deps.baseSha} not present in the checkout \u2014 use fetch-depth: 0 (or fetch the base ref) in your workflow; refusing to guess`,
+        false
+      );
+    }
     const baseSnapshot = await readValuesSnapshot(deps, config.services, deps.baseSha, true);
     const headSnapshot = await readValuesSnapshot(deps, config.services, deps.headSha, false);
     const bumps = detectBumps(baseSnapshot.pins, headSnapshot.pins);
@@ -51000,9 +51016,11 @@ async function runPipeline(deps) {
       return entry;
     };
     const analyses = await runPool(bumps, deps.settings.concurrency, async (bump) => {
-      const workdir = await workdirFor(entryFor(bump.service).repo);
+      const entry = entryFor(bump.service);
       const newlyPinned = baseSnapshot.pins[bump.service] === void 0;
-      const diff = newlyPinned ? "" : await workdir.diffTags(bump.from, bump.to);
+      if (newlyPinned) return { service: bump.service, verified: [], dropped: [] };
+      const workdir = await workdirFor(entry.repo);
+      const diff = await workdir.diffTags(bump.from, bump.to);
       if (diff.trim().length === 0) return { service: bump.service, verified: [], dropped: [] };
       const claims = await extractClaims(deps.settings.model, diff, bump.service, deps.anthropicFactory(), tracker);
       const { verified, dropped } = await verifyClaims(
@@ -51075,7 +51093,12 @@ async function runPipeline(deps) {
     }
     return errorOutcome(deps, ERROR_BANNER, messageOf(error), false);
   } finally {
-    for (const dir of tempDirs) (0, import_node_fs.rmSync)(dir, { recursive: true, force: true });
+    for (const dir of tempDirs) {
+      try {
+        (0, import_node_fs.rmSync)(dir, { recursive: true, force: true });
+      } catch {
+      }
+    }
   }
 }
 

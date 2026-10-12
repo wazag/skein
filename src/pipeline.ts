@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseSkeinYaml, SkeinConfigError, type RunSettings, type ServiceEntry } from "./config";
 import { detectBumps, extractPins, type PinSnapshot } from "./pins";
-import { GitRepoError, valuesFileAtRef, type GitWorkdir } from "./git";
+import { GitRepoError, refExists, valuesFileAtRef, type GitWorkdir } from "./git";
 import { harvestFacts } from "./facts";
 import { extractClaims, type AnthropicClient, type Claim } from "./extract";
 import { CostCeilingExceeded, runCostTracker } from "./cost";
@@ -161,6 +161,17 @@ export async function runPipeline(deps: PipelineDeps): Promise<PipelineOutcome> 
   const tempDirs: string[] = [];
   try {
     const config = parseSkeinYaml(await deps.readConfigFile());
+    // A shallow checkout (fetch-depth: 1) never contains the base ref: every base read would
+    // fail, every service would look newly pinned, no requirement would ever be extracted,
+    // and the gate would silently PASS. Refuse to guess.
+    if (!(await refExists(deps.valuesDir, deps.baseSha))) {
+      return errorOutcome(
+        deps,
+        ERROR_BANNER,
+        `base ref ${deps.baseSha} not present in the checkout — use fetch-depth: 0 (or fetch the base ref) in your workflow; refusing to guess`,
+        false,
+      );
+    }
     const baseSnapshot = await readValuesSnapshot(deps, config.services, deps.baseSha, true);
     const headSnapshot = await readValuesSnapshot(deps, config.services, deps.headSha, false);
     const bumps = detectBumps(baseSnapshot.pins, headSnapshot.pins);
@@ -184,11 +195,14 @@ export async function runPipeline(deps: PipelineDeps): Promise<PipelineOutcome> 
     };
 
     const analyses = await runPool(bumps, deps.settings.concurrency, async (bump): Promise<ServiceAnalysis> => {
-      const workdir = await workdirFor(entryFor(bump.service).repo);
+      const entry = entryFor(bump.service);
       const newlyPinned = baseSnapshot.pins[bump.service] === undefined;
-      // Empty diff (identical trees, or a first-time pin with no base tag): skip the paid
-      // call entirely — an empty diff must never trigger an LLM request.
-      const diff = newlyPinned ? "" : await workdir.diffTags(bump.from, bump.to);
+      // First-time pin (no base tag to diff against) — no clone, no paid call.
+      if (newlyPinned) return { service: bump.service, verified: [], dropped: [] };
+      const workdir = await workdirFor(entry.repo);
+      // Empty diff (identical trees behind two tags): skip the paid call entirely —
+      // an empty diff must never trigger an LLM request.
+      const diff = await workdir.diffTags(bump.from, bump.to);
       if (diff.trim().length === 0) return { service: bump.service, verified: [], dropped: [] };
       const claims = await extractClaims(deps.settings.model, diff, bump.service, deps.anthropicFactory(), tracker);
       const { verified, dropped } = await verifyClaims(claims, diff, (file) =>
@@ -269,6 +283,14 @@ export async function runPipeline(deps: PipelineDeps): Promise<PipelineOutcome> 
     // GitRepoError, LLM/API failures — anything. Always verdict "error", exit 1.
     return errorOutcome(deps, ERROR_BANNER, messageOf(error), false);
   } finally {
-    for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+    // Wrapped per dir: one unremovable workdir must not shield the others from cleanup,
+    // and cleanup must never mask the outcome the try/catch already produced.
+    for (const dir of tempDirs) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // best-effort security cleanup; force already tolerates missing dirs
+      }
+    }
   }
 }

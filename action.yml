@@ -28,6 +28,9 @@ inputs:
   app-private-key:
     description: "GitHub App private key (alternative to github-token)"
     required: false
+  anthropic-api-key:
+    description: "Anthropic API key for claim extraction (falls back to the ANTHROPIC_API_KEY env var)"
+    required: false
 outputs:
   verdict:
     description: "pass | fail | error"

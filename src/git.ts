@@ -108,3 +108,14 @@ export async function bloblessClone(repoUrl: string, token: string, targetDir: s
 export async function valuesFileAtRef(valuesRepoDir: string, file: string, ref: string): Promise<string> {
   return run(valuesRepoDir, "values repo", [], "show", `${ref}:${file}`);
 }
+
+// A shallow checkout (fetch-depth: 1) does not contain the PR base object at all; without
+// this check every base-side read failure would look like a first-time pin.
+export async function refExists(repoDir: string, ref: string): Promise<boolean> {
+  try {
+    await run(repoDir, "values repo", [], "cat-file", "-e", ref);
+    return true;
+  } catch {
+    return false;
+  }
+}
