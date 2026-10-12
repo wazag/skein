@@ -35,9 +35,9 @@ outputs:
   verdict:
     description: "pass | fail | error"
   required-bumps:
-    description: "JSON array of {repo, from, to, reason}"
+    description: "JSON array of {service, from, to, reason}"
   missing-env:
-    description: "JSON array of {env, consumer, provider, citation}"
+    description: "JSON array of {env, consumer, citation}"
   report:
     description: "Full markdown report"
   cost-usd:

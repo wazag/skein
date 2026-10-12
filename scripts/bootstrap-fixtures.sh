@@ -16,8 +16,9 @@
 #
 # Usage: scripts/bootstrap-fixtures.sh <org> [prefix]     (prefix default: skein-fixture)
 #
-# Requires: gh (authenticated), git. Fixture repos are created PUBLIC so any token
-# can read them; delete them after the demo, or fork the script to --private.
+# Requires: gh (authenticated), git >= 2.28 (initial-branch flag). Fixture repos are
+# created PUBLIC so any token can read them; delete them after the demo, or fork the
+# script to --private.
 set -euo pipefail
 
 if [[ $# -lt 1 || $# -gt 2 || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
@@ -46,7 +47,12 @@ readonly GIT_COMMIT=(git -c user.name="Skein fixture rig" -c user.email="skein-f
 create_fixture_repo() {
   local repo_name="$1" description="$2"
   local full_name="${org}/${repo_name}"
-  if ! gh repo create "$full_name" --public --description "$description"; then
+  # gh prints the new repo URL to stdout when not attached to a TTY — inside this
+  # function that stdout is captured by the caller's command substitution, so it
+  # MUST be discarded here or the URL+newline ends up in the git remote URL and the
+  # printed skein.yaml. The function's stdout contract is: exactly one line, the
+  # full repo name.
+  if ! gh repo create "$full_name" --public --description "$description" >/dev/null; then
     echo "could not create $full_name — delete it or pass a different prefix" >&2
     exit 1
   fi

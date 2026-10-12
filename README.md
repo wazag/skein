@@ -343,7 +343,11 @@ a values pin references a tag that does not exist in the service repo. Push the 
 fix the pin.
 
 **`skein: no pull_request context`** — Skein runs on `pull_request` (with a paths
-filter), not `push`, `pull_request_target`, or `workflow_dispatch`.
+filter) only. `push` and `workflow_dispatch` carry no PR context at all. Do **not**
+switch to `pull_request_target` to work around a token problem: it does carry PR
+context, but it would let an untrusted PR influence repo reads performed with your
+privileged token — the classic `pull_request_target` footgun. Use a PAT or App with
+plain `pull_request` instead (see [Authentication](#authentication)).
 
 **Cost abort** — `projected spend $… exceeded the cost ceiling (max-cost-usd $…)` —
 raise `max-cost-usd`, narrow the `paths` filter, or shrink the diff. A partial report
