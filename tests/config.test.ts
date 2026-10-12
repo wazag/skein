@@ -34,6 +34,7 @@ describe("parseSkeinYaml", () => {
     } catch (error) {
       expect((error as Error).message).toContain("api-a");
       expect((error as Error).message).toContain("path");
+      expect((error as Error).message).toContain("(service 'api-a')");
     }
   });
 

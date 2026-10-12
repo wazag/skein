@@ -30,7 +30,9 @@ export function parseSkeinYaml(rawYaml: string): SkeinConfig {
     if (!issue) {
       throw new SkeinConfigError("skein.yaml invalid: unknown validation failure");
     }
-    const serviceContext = issue.path.length > 1 ? ` (service '${String(issue.path[0])}')` : "";
+    const [rootKey, serviceKey] = issue.path;
+    const serviceContext =
+      rootKey === "services" && serviceKey !== undefined ? ` (service '${String(serviceKey)}')` : "";
     throw new SkeinConfigError(`skein.yaml invalid${serviceContext}: ${issue.path.join(".") || "root"} — ${issue.message}`);
   }
   for (const [name, entry] of Object.entries(root.data.services)) {
