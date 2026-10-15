@@ -265,7 +265,15 @@ async function main(): Promise<number> {
       }
       const passed = problems.length === 0;
       if (!passed) failures += 1;
-      results.push({ scenario: scenario.name, expected: scenario.expected, verdict: outcome.verdict, exitCode: outcome.exitCode, problems, passed });
+      results.push({
+        scenario: scenario.name,
+        expected: scenario.expected,
+        verdict: outcome.verdict,
+        exitCode: outcome.exitCode,
+        detail: outcome.detail,
+        problems,
+        passed,
+      });
       console.log(`${passed ? "PASS" : "FAIL"} ${scenario.name} — verdict=${outcome.verdict} exit=${outcome.exitCode}${passed ? "" : ` problems=${JSON.stringify(problems)}`}`);
     }
   } finally {
