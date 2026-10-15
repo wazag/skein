@@ -168,6 +168,7 @@ function buildWorld(): FixtureWorld {
     "    path: tag",
     "",
   ].join("\n"));
+  git(valuesDir, "init", "-b", "main");
   writeFileSync(join(valuesDir, "env/prod/a.yaml"), "tag: a1\n");
   writeFileSync(join(valuesDir, "env/prod/b.yaml"), `tag: ${apiBVariants[0]}\n`);
   commitAll(valuesDir, "initial pins");
