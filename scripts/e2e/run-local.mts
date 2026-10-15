@@ -25,6 +25,7 @@ const GIT_ISOLATION = {
   HOME: tmpdir(),
 };
 const MODEL = process.env.SKEIN_E2E_MODEL ?? "claude-sonnet-5";
+let CURRENT_SCENARIO = "warmup";
 
 type ServiceVariant = { tag: string; files: Record<string, string> };
 
@@ -202,6 +203,21 @@ function buildDeps(world: FixtureWorld, baseSha: string, headSha: string, commen
       return {
         createMessage: async (input: unknown) => {
           const response = await client.messages.create(input as Parameters<typeof client.messages.create>[0]);
+          const trace = {
+            scenario: CURRENT_SCENARIO,
+            model: (input as { model?: string }).model,
+            stop_reason: response.stop_reason,
+            usage: response.usage,
+            blocks: response.content.map((block) =>
+              block.type === "text"
+                ? { type: block.type, text: block.text }
+                : block.type === "thinking"
+                  ? { type: block.type, thinking: block.thinking.slice(0, 400) }
+                  : { type: block.type }
+            ),
+          };
+          const traceFile = join(OUTPUT_DIR, `${CURRENT_SCENARIO}.model-trace.json`);
+          writeFileSync(traceFile, JSON.stringify(trace, null, 2));
           return {
             content: response.content.map((block) => ({ type: block.type, text: block.type === "text" ? block.text : undefined })),
             usage: { input_tokens: response.usage.input_tokens, output_tokens: response.usage.output_tokens },
@@ -239,6 +255,7 @@ async function main(): Promise<number> {
   let failures = 0;
   try {
     for (const scenario of SCENARIOS) {
+      CURRENT_SCENARIO = scenario.name;
       const { baseSha, headSha } = bumpValue(world, scenario.bumpedTag);
       const commentFile = join(OUTPUT_DIR, `${scenario.name}.comment.md`);
       const outcome = await runPipeline(buildDeps(world, baseSha, headSha, commentFile));
