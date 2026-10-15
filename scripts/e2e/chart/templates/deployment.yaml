@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels: { app: {{ .Release.Name }}, rig: skein-e2e }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: {{ .Release.Name }} } }
+  template:
+    metadata:
+      labels: { app: {{ .Release.Name }}, rig: skein-e2e }
+    spec:
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: service
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SERVE
+              value: {{ .Values.serve | quote }}
+            - name: CALL
+              value: {{ .Values.call | quote }}
+            {{- if .Values.requireEnvNames }}
+            - name: REQUIRED_ENV
+              value: {{ .Values.requireEnvNames | quote }}
+            {{- end }}
+            {{- range .Values.requiredEnv }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+            {{- if .Values.upstream }}
+            - name: UPSTREAM_URL
+              value: {{ .Values.upstream | quote }}
+            {{- end }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 2
+            periodSeconds: 2
+            failureThreshold: 15

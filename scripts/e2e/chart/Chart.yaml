@@ -1,0 +1,4 @@
+apiVersion: v2
+name: skein-fixture
+description: Fixture service chart for the Skein e2e rig
+version: 0.1.0
