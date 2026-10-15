@@ -57,14 +57,24 @@ function schemaValidClaimsFrom(candidate: unknown): Claim[] {
   return claims;
 }
 
-// A chunk replying with prose instead of JSON must not kill the run —
-// record no claims and continue; the citation verifier and confidence flags absorb the gap.
+// Models differ in JSON habits: Claude returns the bare array; others wrap it
+// in markdown fences or lead with prose. Tolerate fences and leading/trailing
+// noise by slicing the outermost [...] span before parsing.
 function claimsFromResponseText(text: string | undefined): Claim[] {
-  try {
-    return schemaValidClaimsFrom(JSON.parse(text ?? "[]") as unknown);
-  } catch {
-    return [];
+  const raw = (text ?? "").trim();
+  const unfenced = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  const candidates = [unfenced];
+  const arraySpan = /\[[\s\S]*\]/.exec(unfenced);
+  if (arraySpan) candidates.push(arraySpan[0]);
+  for (const candidate of candidates) {
+    try {
+      const parsed: unknown = JSON.parse(candidate);
+      if (Array.isArray(parsed)) return schemaValidClaimsFrom(parsed);
+    } catch {
+      // try the next, more aggressive extraction
+    }
   }
+  return [];
 }
 
 export async function extractClaims(

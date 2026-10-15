@@ -50753,11 +50753,19 @@ function schemaValidClaimsFrom(candidate) {
   return claims;
 }
 function claimsFromResponseText(text) {
-  try {
-    return schemaValidClaimsFrom(JSON.parse(text ?? "[]"));
-  } catch {
-    return [];
+  const raw = (text ?? "").trim();
+  const unfenced = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  const candidates = [unfenced];
+  const arraySpan = /\[[\s\S]*\]/.exec(unfenced);
+  if (arraySpan) candidates.push(arraySpan[0]);
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (Array.isArray(parsed)) return schemaValidClaimsFrom(parsed);
+    } catch {
+    }
   }
+  return [];
 }
 async function extractClaims(model, diff, serviceName, anthropic, tracker = runCostTracker(), price = DEFAULT_MODEL_PRICE) {
   const claims = [];

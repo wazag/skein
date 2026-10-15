@@ -63,6 +63,17 @@ describe("extractClaims", () => {
     expect(createMessage).toHaveBeenCalledTimes(2);
     expect(claims).toEqual(validClaims);
   });
+
+  it("accepts claims wrapped in markdown fences or leading prose", async () => {
+    const fenced = "```json\n" + JSON.stringify(validClaims, null, 2) + "\n```";
+    const prosed = "Here are the claims:\n" + JSON.stringify(validClaims);
+    for (const response of [fenced, prosed]) {
+      const anthropic = fakeAnthropic([]);
+      anthropic.createMessage.mockResolvedValueOnce(textResponse(response));
+      const claims = await extractClaims(MODEL_ID, "diff --git a/x b/x\n+fetch('/v2/orders')", "api-b", anthropic);
+      expect(claims).toEqual(validClaims);
+    }
+  });
 });
 
 describe("runCostTracker", () => {
