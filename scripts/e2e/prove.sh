@@ -14,7 +14,7 @@ echo "==> [1/4] building fixture image"
 docker build -q -t skein-fixture:latest "$SCRIPT_DIR" >/dev/null
 
 echo "==> [2/4] local harness (real pipeline + real LLM)"
-if ! (cd "$SCRIPT_DIR/../.." && npx tsx scripts/e2e/run-local.ts); then
+if ! (cd "$SCRIPT_DIR/../.." && npx tsx scripts/e2e/run-local.mts); then
   echo "PROOF FAILED: local harness scenarios did not match expectations"
   exit 1
 fi
