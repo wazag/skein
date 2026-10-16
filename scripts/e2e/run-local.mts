@@ -199,29 +199,52 @@ function buildDeps(world: FixtureWorld, baseSha: string, headSha: string, commen
       return bloblessClone(repoUrl, "", mkdtempSync(join(tmpdir(), "skein-e2e-clone-")));
     },
     anthropicFactory: () => {
-      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "" });
+      // Two transports: Anthropic-compatible (ANTHROPIC_API_KEY [+ ANTHROPIC_BASE_URL])
+      // or OpenAI-compatible (OPENROUTER_API_KEY) — chat/completions mapped onto the
+      // AnthropicClient shape the pipeline expects.
+      const useOpenaiCompat = Boolean(process.env.OPENROUTER_API_KEY);
+      const client = useOpenaiCompat ? null : new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "" });
+      const openaiBaseUrl = process.env.OPENAI_BASE_URL ?? "https://openrouter.ai/api/v1";
       return {
         createMessage: async (input: unknown) => {
-          const response = await client.messages.create(input as Parameters<typeof client.messages.create>[0]);
+          const request = input as { model?: string; system?: string; max_tokens?: number; messages: Array<{ role: string; content: string }> };
+          let blocks: Array<{ type: string; text?: string }>;
+          let usage: { input_tokens: number; output_tokens: number };
+          if (useOpenaiCompat) {
+            const response = await fetch(`${openaiBaseUrl}/chat/completions`, {
+              method: "POST",
+              headers: { "content-type": "application/json", authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
+              body: JSON.stringify({
+                model: request.model,
+                max_tokens: request.max_tokens,
+                messages: [
+                  ...(request.system ? [{ role: "system", content: request.system }] : []),
+                  ...request.messages,
+                ],
+              }),
+            });
+            const body = (await response.json()) as {
+              choices?: Array<{ message?: { content?: string } }>;
+              usage?: { prompt_tokens?: number; completion_tokens?: number };
+              error?: { message?: string };
+            };
+            if (!response.ok) throw new Error(`${response.status} ${JSON.stringify(body)}`);
+            blocks = [{ type: "text", text: body.choices?.[0]?.message?.content ?? "" }];
+            usage = { input_tokens: body.usage?.prompt_tokens ?? 0, output_tokens: body.usage?.completion_tokens ?? 0 };
+          } else {
+            const response = await client!.messages.create(input as Parameters<typeof client.messages.create>[0]);
+            blocks = response.content.map((block) => ({ type: block.type, text: block.type === "text" ? block.text : undefined }));
+            usage = { input_tokens: response.usage.input_tokens, output_tokens: response.usage.output_tokens };
+          }
           const trace = {
             scenario: CURRENT_SCENARIO,
-            model: (input as { model?: string }).model,
-            stop_reason: response.stop_reason,
-            usage: response.usage,
-            blocks: response.content.map((block) =>
-              block.type === "text"
-                ? { type: block.type, text: block.text }
-                : block.type === "thinking"
-                  ? { type: block.type, thinking: block.thinking.slice(0, 400) }
-                  : { type: block.type }
-            ),
+            transport: useOpenaiCompat ? "openai-compat" : "anthropic",
+            model: request.model,
+            usage,
+            blocks: blocks.map((block) => (block.type === "text" ? { type: block.type, text: block.text?.slice(0, 400) } : block)),
           };
-          const traceFile = join(OUTPUT_DIR, `${CURRENT_SCENARIO}.model-trace.json`);
-          writeFileSync(traceFile, JSON.stringify(trace, null, 2));
-          return {
-            content: response.content.map((block) => ({ type: block.type, text: block.type === "text" ? block.text : undefined })),
-            usage: { input_tokens: response.usage.input_tokens, output_tokens: response.usage.output_tokens },
-          };
+          writeFileSync(join(OUTPUT_DIR, `${CURRENT_SCENARIO}.model-trace.json`), JSON.stringify(trace, null, 2));
+          return { content: blocks, usage };
         },
       };
     },
@@ -245,8 +268,8 @@ function matches(actual: unknown[], expected: unknown[], label: string): string[
 }
 
 async function main(): Promise<number> {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error("run-local: ANTHROPIC_API_KEY is required (real extraction calls)");
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENROUTER_API_KEY) {
+    console.error("run-local: ANTHROPIC_API_KEY or OPENROUTER_API_KEY is required (real extraction calls)");
     return 1;
   }
   mkdirSync(OUTPUT_DIR, { recursive: true });
