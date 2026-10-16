@@ -46,6 +46,10 @@ const API_B_VARIANTS: ServiceVariant[] = [
     files: { "src/client.ts": 'export const endpoints = ["/v1/orders"];\nawait fetch("/v1/orders");\n' },
   },
   {
+    tag: "b3-cosmetic",
+    files: { "README.md": "# api-b\n\nSkein e2e fixture service. Cosmetic release note.\n" },
+  },
+  {
     tag: "b5",
     files: {
       "src/client.ts":
@@ -127,14 +131,20 @@ function buildServiceRepo(parentDir: string, repoName: string, variants: Service
     writeFileSync(join(repoDir, path), content);
   }
   commitAll(repoDir, "initial");
+  // Each variant branches from the shared base so diffs between any two tags
+  // isolate that variant's change — never the accumulated history of the others.
   for (const variant of variants) {
+    const workBranch = `variant/${variant.tag}`;
+    git(repoDir, "checkout", "-q", "-B", workBranch, "main");
     for (const [path, content] of Object.entries(variant.files)) {
       mkdirSync(join(repoDir, path, ".."), { recursive: true });
       writeFileSync(join(repoDir, path), content);
     }
     commitAll(repoDir, variant.tag);
     git(repoDir, "tag", variant.tag);
+    git(repoDir, "branch", "-q", "-D", workBranch);
   }
+  git(repoDir, "checkout", "-q", "main");
   return repoDir;
 }
 
@@ -150,10 +160,6 @@ function buildWorld(): FixtureWorld {
   const apiADir = buildServiceRepo(rootDir, "api-a", API_A_VARIANTS, {});
   const apiBDir = buildServiceRepo(rootDir, "api-b", API_B_VARIANTS, {});
   const apiBVariants = ["b3", ...SCENARIOS.map((scenario) => scenario.bumpedTag)];
-  // b3-cosmetic: same code as b3, README-only change on top.
-  writeFileSync(join(apiBDir, "README.md"), "# api-b\n\nSkein e2e fixture service. Cosmetic release note.\n");
-  commitAll(apiBDir, "cosmetic");
-  git(apiBDir, "tag", "b3-cosmetic");
 
   const valuesDir = join(rootDir, "values");
   mkdirSync(join(valuesDir, "env/prod"), { recursive: true });
@@ -193,7 +199,8 @@ function buildDeps(world: FixtureWorld, baseSha: string, headSha: string, commen
     baseSha,
     headSha,
     prNumber: 0,
-    repoUrlFor: (service: string) => (service === "api-a" ? world.apiADir : world.apiBDir),
+    // The pipeline passes the config repo: spec (e.g. "local/api-a"), not the service name.
+    repoUrlFor: (repoSpec: string) => (repoSpec.endsWith("api-a") ? world.apiADir : world.apiBDir),
     cloneFactory: (repoUrl: string, token: string) => {
       void token;
       return bloblessClone(repoUrl, "", mkdtempSync(join(tmpdir(), "skein-e2e-clone-")));
