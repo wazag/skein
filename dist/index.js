@@ -50717,7 +50717,14 @@ var EXTRACTION_PROMPT = `You analyze a git diff of a service in a multi-repo sys
 - endpoints this service now CALLS (kind "endpoint", direction "calls")
 - environment variables this service now READS (kind "env", direction "reads")
 - temporal task-queue names now used (kind "queue", direction "reads")
-Every claim MUST cite the file and line number in the diff where it appears. Uncited claims will be discarded. Return JSON: an array of claims, nothing else.`;
+
+Every claim MUST cite the file and line number in the diff where it appears. Uncited claims will be discarded.
+
+Return a JSON array and NOTHING else \u2014 no prose, no markdown fences. Each element MUST be an object with EXACTLY these keys:
+{"kind": "endpoint" | "env" | "queue", "detail": "<the endpoint path, env var name, or queue name>", "direction": "calls" | "serves" | "reads", "citation": {"file": "<path>", "line": <number>}}
+
+Example:
+[{"kind":"endpoint","detail":"/v2/orders","direction":"calls","citation":{"file":"src/client.ts","line":3}}]`;
 var claimSchema = external_exports.object({
   kind: external_exports.enum(["endpoint", "env", "queue"]),
   detail: external_exports.string().min(1),
@@ -50743,11 +50750,27 @@ function chunkDiff(diff) {
   if (currentBatch.length > 0) chunks.push(currentBatch.join("\n"));
   return chunks.length > 0 ? chunks : [diff];
 }
+var flatClaimSchema = external_exports.object({
+  kind: external_exports.enum(["endpoint", "env", "queue"]),
+  detail: external_exports.string().min(1).optional(),
+  name: external_exports.string().min(1).optional(),
+  direction: external_exports.enum(["calls", "serves", "reads"]),
+  file: external_exports.string().min(1),
+  line: external_exports.number().int().nonnegative()
+});
+function normalizeEntry(entry) {
+  const canonical = claimSchema.safeParse(entry);
+  if (canonical.success) return canonical.data;
+  const flat = flatClaimSchema.safeParse(entry);
+  if (!flat.success) return entry;
+  const detail = flat.data.detail ?? flat.data.name;
+  return detail === void 0 ? entry : { kind: flat.data.kind, detail, direction: flat.data.direction, citation: { file: flat.data.file, line: flat.data.line } };
+}
 function schemaValidClaimsFrom(candidate) {
   if (!Array.isArray(candidate)) return [];
   const claims = [];
   for (const entry of candidate) {
-    const result = claimSchema.safeParse(entry);
+    const result = claimSchema.safeParse(normalizeEntry(entry));
     if (result.success) claims.push(result.data);
   }
   return claims;

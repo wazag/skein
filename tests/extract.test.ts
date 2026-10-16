@@ -74,6 +74,21 @@ describe("extractClaims", () => {
       expect(claims).toEqual(validClaims);
     }
   });
+
+  it("normalizes flat-shaped claims (name/file/line at top level) to canonical", async () => {
+    const flat = [
+      { kind: "endpoint", direction: "calls", name: "/v2/orders", file: "src/client.ts", line: 3 },
+      { kind: "env", direction: "reads", detail: "ORDERS_V2_URL", file: "src/config.ts", line: 1 },
+      { kind: "mystery", direction: "calls", name: "x", file: "a", line: 1 },
+    ];
+    const anthropic = fakeAnthropic([]);
+    anthropic.createMessage.mockResolvedValueOnce(textResponse(JSON.stringify(flat)));
+    const claims = await extractClaims(MODEL_ID, "diff --git a/x b/x\n+fetch('/v2/orders')", "api-b", anthropic);
+    expect(claims).toEqual([
+      { kind: "endpoint", detail: "/v2/orders", direction: "calls", citation: { file: "src/client.ts", line: 3 } },
+      { kind: "env", detail: "ORDERS_V2_URL", direction: "reads", citation: { file: "src/config.ts", line: 1 } },
+    ]);
+  });
 });
 
 describe("runCostTracker", () => {
