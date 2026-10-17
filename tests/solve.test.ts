@@ -36,6 +36,26 @@ describe("solveMinimumUpgrades", () => {
     expect(result.requiredBumps).toEqual([]);
   });
 
+  it("never satisfies a requirement from the consumer's own repo (self-serving)", async () => {
+    // api-b@b7's own source contains "/v9/ghost" as a literal — direction-blind
+    // harvest sees it as served; the solver must not self-serve.
+    const selfServingFacts: Record<string, ProviderFacts> = {
+      "api-b@b3": emptyFacts,
+      "api-b@b7": { ...emptyFacts, endpoints: ["/v9/ghost"] },
+    };
+    const result = await solveMinimumUpgrades({
+      ...baseInput,
+      deployedPins: { "api-a": "a1", "api-b": "b3" },
+      factsAtTag: (service, tag) => Promise.resolve(selfServingFacts[`${service}@${tag}`] ?? factsWithTag[`${service}@${tag}`] ?? emptyFacts),
+      tagsAscending: (service, current) =>
+        Promise.resolve(service === "api-a" ? ["a1", "a2", "a3"].slice(["a1", "a2", "a3"].indexOf(current)) : ["b3", "b7"].slice(["b3", "b7"].indexOf(current))),
+      requirements: [{ service: "api-b", kind: "endpoint", detail: "/v9/ghost", citation: { file: "c.ts", line: 3 } }],
+    });
+    expect(result.verdict).toBe("fail");
+    expect(result.requiredBumps).toEqual([]);
+    expect(result.unmet.some((entry) => entry.detail === "/v9/ghost")).toBe(true);
+  });
+
   it("recommends the smallest sufficient provider tag", async () => {
     const result = await solveMinimumUpgrades({
       ...baseInput,

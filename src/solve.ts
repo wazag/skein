@@ -69,8 +69,16 @@ async function tagsFrom(input: SolverInput, service: string, current: string): P
   return tags;
 }
 
+// A requirement from service X is never satisfied by X itself: same repo = same
+// deploy unit, so a literal in the consumer's own source (harvest is direction-blind)
+// is an internal detail, not a cross-repo coupling.
+function isSelfServing(service: string, requirement: Requirement): boolean {
+  return service === requirement.service;
+}
+
 async function servedAtDeployedPins(input: SolverInput, requirement: Requirement): Promise<boolean> {
   for (const [service, tag] of Object.entries(input.deployedPins)) {
+    if (isSelfServing(service, requirement)) continue;
     if (factsSatisfy(await factsAt(input, service, tag), requirement)) return true;
   }
   return false;
@@ -92,6 +100,7 @@ async function canServeAtSomeTag(
 // Phase A routing: FIRST provider (deployedPins insertion order) able to serve it at some tag ≥ current.
 async function firstProviderAbleToServe(input: SolverInput, requirement: Requirement): Promise<string | null> {
   for (const [service, currentTag] of Object.entries(input.deployedPins)) {
+    if (isSelfServing(service, requirement)) continue;
     if (await canServeAtSomeTag(input, service, currentTag, requirement)) return service;
   }
   return null;

@@ -50903,8 +50903,12 @@ async function tagsFrom(input, service, current) {
   }
   return tags;
 }
+function isSelfServing(service, requirement) {
+  return service === requirement.service;
+}
 async function servedAtDeployedPins(input, requirement) {
   for (const [service, tag] of Object.entries(input.deployedPins)) {
+    if (isSelfServing(service, requirement)) continue;
     if (factsSatisfy(await factsAt(input, service, tag), requirement)) return true;
   }
   return false;
@@ -50918,6 +50922,7 @@ async function canServeAtSomeTag(input, service, currentTag, requirement) {
 }
 async function firstProviderAbleToServe(input, requirement) {
   for (const [service, currentTag] of Object.entries(input.deployedPins)) {
+    if (isSelfServing(service, requirement)) continue;
     if (await canServeAtSomeTag(input, service, currentTag, requirement)) return service;
   }
   return null;
