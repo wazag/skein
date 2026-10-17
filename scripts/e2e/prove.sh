@@ -41,7 +41,7 @@ if truth.get("pr-pins-only", {}).get("observed") != "not-ready":
     failures.append("cluster layer: pr-pins-only was unexpectedly healthy (gate would be lying)")
 if truth.get("skein-fix", {}).get("observed") != "ready":
     failures.append("cluster layer: skein-fix did not heal (recommendation insufficient)")
-if not scenarios.get("missing-env-fails", {}).get("passed"):
+if not scenarios.get("env-var-missing-fails", {}).get("passed"):
     failures.append("verdict layer: missing-env scenario did not report ORDERS_V2_URL")
 if truth.get("missing-env", {}).get("observed") != "crashloop":
     failures.append("cluster layer: missing-env was unexpectedly running")
