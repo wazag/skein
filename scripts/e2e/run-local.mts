@@ -142,9 +142,9 @@ function buildServiceRepo(parentDir: string, repoName: string, variants: Service
     }
     commitAll(repoDir, variant.tag);
     git(repoDir, "tag", variant.tag);
+    git(repoDir, "checkout", "-q", "main");
     git(repoDir, "branch", "-q", "-D", workBranch);
   }
-  git(repoDir, "checkout", "-q", "main");
   return repoDir;
 }
 
