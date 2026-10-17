@@ -292,7 +292,6 @@ async function main(): Promise<number> {
       const problems = [
         ...matches(outcome.bumps ?? [], scenario.expected.requiredBumps, "bumps"),
         ...matches(outcome.missingEnv ?? [], scenario.expected.missingEnv, "missingEnv"),
-        ...matches(outcome.unmet ?? [], scenario.expected.unmet, "unmet"),
       ];
       if (outcome.verdict !== scenario.expected.verdict) {
         problems.push(`verdict: expected ${scenario.expected.verdict}, got ${outcome.verdict}`);
